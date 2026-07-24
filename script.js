@@ -17,10 +17,12 @@ let gameState = {
   matchedPairs: new Set(),
   wrongTimeout: null,
   mode: 'match',
+  // для квиза
   quizIndex: 0,
   quizScore: 0,
   quizAnswered: false,
   quizQuestions: [],
+  // для аудио-теста
   audioCards: [],
   audioIndex: 0,
   audioScore: 0,
@@ -220,7 +222,7 @@ function renderGame() {
   });
 }
 
-// ========== Режим 1: Сопоставь пару ==========
+// ========== Режим 1: Сопоставь пару (вопросы и ответы перемешаны) ==========
 function renderMatch() {
   const activeCards = cards.filter((_, idx) => !gameState.matchedPairs.has(idx));
   if (activeCards.length === 0) {
@@ -232,9 +234,9 @@ function renderMatch() {
     `;
   }
 
-  let questions = activeCards.map(card => ({ text: card.question, cardIndex: cards.indexOf(card) }));
-  let answers = activeCards.map(card => ({ text: card.answer, cardIndex: cards.indexOf(card) }));
-  shuffleArray(answers);
+  // Перемешиваем и вопросы, и ответы
+  let questions = shuffleArray(activeCards.map(card => ({ text: card.question, cardIndex: cards.indexOf(card) })));
+  let answers = shuffleArray(activeCards.map(card => ({ text: card.answer, cardIndex: cards.indexOf(card) })));
 
   const questionsHtml = questions.map(item => `
     <div class="game-item" data-type="question" data-cardindex="${item.cardIndex}">${item.text}</div>
@@ -246,7 +248,7 @@ function renderMatch() {
   return `
     <div class="game-controls">
       <span class="game-stats">Осталось пар: ${activeCards.length}</span>
-      <button class="reset-btn" id="resetGameBtn">🔄 Перемешать ответы</button>
+      <button class="reset-btn" id="resetGameBtn">🔄 Перемешать заново</button>
     </div>
     <div class="game-board">
       <div class="game-col"><h3>Вопросы</h3>${questionsHtml}</div>
@@ -308,7 +310,7 @@ function renderQuiz() {
   `;
 }
 
-// ========== Режим 3: Сопоставь все ==========
+// ========== Режим 3: Сопоставь все (вопросы и ответы перемешаны) ==========
 function renderMatchAll() {
   const totalPairs = cards.length;
   const matchedCount = gameState.matchedPairs.size;
@@ -321,8 +323,9 @@ function renderMatchAll() {
     `;
   }
 
-  let questions = cards.map(card => ({ text: card.question, cardIndex: cards.indexOf(card) }));
-  let answers = shuffleArray([...cards]).map(card => ({ text: card.answer, cardIndex: cards.indexOf(card) }));
+  // Перемешиваем и вопросы, и ответы
+  let questions = shuffleArray(cards.map(card => ({ text: card.question, cardIndex: cards.indexOf(card) })));
+  let answers = shuffleArray(cards.map(card => ({ text: card.answer, cardIndex: cards.indexOf(card) })));
 
   const questionsHtml = questions.map(item => {
     const matched = gameState.matchedPairs.has(item.cardIndex);
@@ -427,7 +430,6 @@ function renderAudioQuiz() {
   `;
 }
 
-// ========== Озвучивание (только цифры, максимально быстро) ==========
 // ========== Озвучивание с разбивкой по частям ==========
 function speakText(text) {
   if (!window.speechSynthesis) {
