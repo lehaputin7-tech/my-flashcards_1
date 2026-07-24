@@ -1,3 +1,6 @@
+// ========== Версия приложения (меняйте при обновлении карточек) ==========
+const APP_VERSION = '1.0'; // если захотите обновить карточки — увеличьте число
+
 // ========== Хранилище ==========
 let cards = [];
 
@@ -24,7 +27,10 @@ let gameState = {
 // ========== Загрузка / сохранение ==========
 function loadCards() {
   const saved = localStorage.getItem('flashcards');
-  if (saved) {
+  const savedVersion = localStorage.getItem('flashcards_version');
+
+  // Если данные есть и версия совпадает — загружаем их, иначе — используем новые карточки
+  if (saved && savedVersion === APP_VERSION) {
     cards = JSON.parse(saved);
   } else {
     // ===== НОВЫЙ НАБОР КАРТОЧЕК (ГОСТ → описание) =====
@@ -56,8 +62,9 @@ function loadCards() {
       { question: 'ГОСТ 8639', answer: 'Трубы стальные квадратные' },
     ];
     // ===== КОНЕЦ НОВОГО НАБОРА =====
+    // Сохраняем новые карточки с текущей версией
+    saveCards();
   }
-  saveCards();
   render();
   renderGame();
   switchTab('cards');
@@ -65,6 +72,7 @@ function loadCards() {
 
 function saveCards() {
   localStorage.setItem('flashcards', JSON.stringify(cards));
+  localStorage.setItem('flashcards_version', APP_VERSION);
 }
 
 function resetGame() {
@@ -74,7 +82,6 @@ function resetGame() {
     clearTimeout(gameState.wrongTimeout);
     gameState.wrongTimeout = null;
   }
-  // Сбрасываем квиз
   gameState.quizIndex = 0;
   gameState.quizScore = 0;
   gameState.quizAnswered = false;
@@ -176,7 +183,6 @@ function renderGame() {
     return;
   }
 
-  // Кнопки режимов
   const modeTabs = `
     <div class="game-mode-tabs">
       <button class="game-mode-btn ${gameState.mode === 'match' ? 'active' : ''}" data-mode="match">🧩 Сопоставь пару</button>
@@ -196,19 +202,10 @@ function renderGame() {
 
   gameContainer.innerHTML = modeTabs + content;
 
-  // События на кнопки режимов
   document.querySelectorAll('.game-mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       gameState.mode = btn.dataset.mode;
-      // При смене режима сбрасываем прогресс (кроме matchedPairs? Для matchAll тоже отдельный)
-      // Лучше сбросить всё для чистоты
       resetGame();
-      // но режим сохраняем
-      // После resetGame() снова вызовется renderGame(), но он уже будет с новым режимом, потому что мы его изменили
-      // Однако resetGame вызывает renderGame, что может зациклить, поэтому сделаем иначе:
-      // Уберём вызов renderGame из resetGame, а здесь вызовем renderGame вручную.
-      // Перепишем resetGame: уберём renderGame, оставим только сброс данных.
-      // Я переделаю.
     });
   });
 }
@@ -250,16 +247,13 @@ function renderMatch() {
 
 // ========== Режим 2: Тест (викторина) ==========
 function renderQuiz() {
-  // Готовим вопросы, если ещё не готовы
   if (gameState.quizQuestions.length === 0) {
-    // Берём все карточки, перемешиваем
     gameState.quizQuestions = shuffleArray([...cards]);
     gameState.quizIndex = 0;
     gameState.quizScore = 0;
     gameState.quizAnswered = false;
   }
 
-  // Если прошли все вопросы
   if (gameState.quizIndex >= gameState.quizQuestions.length) {
     return `
       <div class="quiz-finish">
@@ -271,23 +265,18 @@ function renderQuiz() {
   }
 
   const current = gameState.quizQuestions[gameState.quizIndex];
-  // Собираем все ответы (уникальные)
   const allAnswers = cards.map(c => c.answer);
-  // Убираем правильный из списка для дистракторов
   const distractors = allAnswers.filter(a => a !== current.answer);
-  // Берём 3 случайных дистрактора (если их меньше, дополняем)
   let options = [current.answer];
   const shuffledDistractors = shuffleArray(distractors);
   for (let i = 0; i < Math.min(3, shuffledDistractors.length); i++) {
     options.push(shuffledDistractors[i]);
   }
-  // Если недостаточно, добавляем повторяющиеся (но лучше не надо)
   while (options.length < 4) {
     options.push('???');
   }
   shuffleArray(options);
 
-  // Строим HTML вариантов
   const optionsHtml = options.map((opt, idx) => {
     let classes = 'quiz-option';
     if (gameState.quizAnswered) {
@@ -311,7 +300,6 @@ function renderQuiz() {
 
 // ========== Режим 3: Сопоставь все (карточки не исчезают) ==========
 function renderMatchAll() {
-  // Используем тот же matchedPairs для отслеживания соединённых пар
   const totalPairs = cards.length;
   const matchedCount = gameState.matchedPairs.size;
   if (matchedCount === totalPairs && totalPairs > 0) {
@@ -323,7 +311,6 @@ function renderMatchAll() {
     `;
   }
 
-  // Показываем все карточки, но соединённые подсвечиваем зелёным и блокируем
   let questions = cards.map(card => ({ text: card.question, cardIndex: cards.indexOf(card) }));
   let answers = shuffleArray([...cards]).map(card => ({ text: card.answer, cardIndex: cards.indexOf(card) }));
 
@@ -365,12 +352,10 @@ gameContainer.addEventListener('click', (e) => {
     handleGameItemClick(target);
     return;
   }
-  // Кнопки сброса
   if (e.target.id === 'resetGameBtn' || e.target.id === 'resetMatchAllBtn' || e.target.id === 'resetQuizBtn') {
     resetGame();
     return;
   }
-  // Кнопка "Далее" в тесте
   if (e.target.id === 'quizNextBtn') {
     gameState.quizIndex++;
     gameState.quizAnswered = false;
@@ -378,12 +363,10 @@ gameContainer.addEventListener('click', (e) => {
     renderGame();
     return;
   }
-  // Обработка клика по варианту ответа в тесте (если не выбран класс)
   const option = e.target.closest('.quiz-option');
   if (option && !gameState.quizAnswered) {
     const selectedText = option.dataset.option;
     const current = gameState.quizQuestions[gameState.quizIndex];
-    // Проверяем, правильный ли ответ
     if (selectedText === current.answer) {
       gameState.quizScore++;
     }
@@ -430,7 +413,6 @@ function handleMatchClick(el) {
     return;
   }
 
-  // Разные типы
   let questionEl, answerEl, questionCardIndex, answerCardIndex;
   if (selected.type === 'question') {
     questionEl = selected.element;
@@ -518,7 +500,7 @@ function handleMatchAllClick(el) {
     questionEl.classList.add('matched');
     answerEl.classList.add('matched');
     gameState.selected = null;
-    renderGame(); // перерисовываем, чтобы обновить состояние
+    renderGame();
   } else {
     questionEl.classList.add('wrong');
     answerEl.classList.add('wrong');
