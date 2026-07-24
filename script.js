@@ -22,12 +22,27 @@ let gameState = {
   quizScore: 0,
   quizAnswered: false,
   quizQuestions: [],
-  // для аудио-теста
+  // для аудио-теста (обычного)
   audioCards: [],
   audioIndex: 0,
   audioScore: 0,
   audioResults: [],
   audioSpeaking: false,
+  // для аудио на время
+  timedAudioCards: [],
+  timedAudioIndex: 0,
+  timedAudioScore: 0,
+  timedAudioResults: [],
+  timedAudioSpeaking: false,
+  timedAudioTimeLimit: 10,
+  timedAudioTimeRemaining: 10,
+  timedAudioTimerId: null,
+  timedAudioStarted: false,
+  timedAudioFinished: false,
+  // Для фиксации вариантов ответов в текущем вопросе
+  timedCurrentOptions: [],      // массив строк вариантов
+  timedCurrentCorrect: '',      // правильный ответ для текущего вопроса
+  timedCurrentQuestionIndex: -1 // индекс вопроса, для которого сгенерированы варианты
 };
 
 // ========== Загрузка / сохранение ==========
@@ -92,7 +107,22 @@ function resetGame() {
   gameState.audioScore = 0;
   gameState.audioResults = [];
   gameState.audioSpeaking = false;
-  renderGame();
+  if (gameState.timedAudioTimerId) {
+    clearInterval(gameState.timedAudioTimerId);
+    gameState.timedAudioTimerId = null;
+  }
+  gameState.timedAudioCards = [];
+  gameState.timedAudioIndex = 0;
+  gameState.timedAudioScore = 0;
+  gameState.timedAudioResults = [];
+  gameState.timedAudioSpeaking = false;
+  gameState.timedAudioStarted = false;
+  gameState.timedAudioFinished = false;
+  gameState.timedAudioTimeRemaining = gameState.timedAudioTimeLimit;
+  // Сброс зафиксированных вариантов
+  gameState.timedCurrentOptions = [];
+  gameState.timedCurrentCorrect = '';
+  gameState.timedCurrentQuestionIndex = -1;
 }
 
 // ========== Вкладки ==========
@@ -128,6 +158,7 @@ function addCard() {
   saveCards();
   render();
   resetGame();
+  renderGame();
   questionInput.value = '';
   answerInput.value = '';
   questionInput.focus();
@@ -138,6 +169,7 @@ function deleteCard(index) {
   saveCards();
   render();
   resetGame();
+  renderGame();
 }
 
 function flipCard(index) {
@@ -195,6 +227,7 @@ function renderGame() {
       <button class="game-mode-btn ${gameState.mode === 'quiz' ? 'active' : ''}" data-mode="quiz">📝 Тест</button>
       <button class="game-mode-btn ${gameState.mode === 'matchAll' ? 'active' : ''}" data-mode="matchAll">🔗 Сопоставь все</button>
       <button class="game-mode-btn ${gameState.mode === 'audioQuiz' ? 'active' : ''}" data-mode="audioQuiz">🎧 Аудио-тест</button>
+      <button class="game-mode-btn ${gameState.mode === 'timedAudio' ? 'active' : ''}" data-mode="timedAudio">⏱ Аудио на время</button>
     </div>
   `;
 
@@ -207,22 +240,33 @@ function renderGame() {
     content = renderMatchAll();
   } else if (gameState.mode === 'audioQuiz') {
     content = renderAudioQuiz();
+  } else if (gameState.mode === 'timedAudio') {
+    content = renderTimedAudioQuiz();
   }
 
   gameContainer.innerHTML = modeTabs + content;
 
   document.querySelectorAll('.game-mode-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      gameState.mode = btn.dataset.mode;
-      if (gameState.mode === 'audioQuiz') {
-        prepareAudioQuiz();
-      }
-      resetGame();
-    });
+    btn.removeEventListener('click', handleModeSwitch);
+    btn.addEventListener('click', handleModeSwitch);
   });
 }
 
-// ========== Режим 1: Сопоставь пару (вопросы и ответы перемешаны) ==========
+function handleModeSwitch(e) {
+  const btn = e.currentTarget;
+  const newMode = btn.dataset.mode;
+  if (newMode === gameState.mode) return;
+  gameState.mode = newMode;
+  resetGame();
+  if (gameState.mode === 'audioQuiz') {
+    prepareAudioQuiz();
+  } else if (gameState.mode === 'timedAudio') {
+    prepareTimedAudioQuiz();
+  }
+  renderGame();
+}
+
+// ========== Режим 1: Сопоставь пару ==========
 function renderMatch() {
   const activeCards = cards.filter((_, idx) => !gameState.matchedPairs.has(idx));
   if (activeCards.length === 0) {
@@ -234,7 +278,6 @@ function renderMatch() {
     `;
   }
 
-  // Перемешиваем и вопросы, и ответы
   let questions = shuffleArray(activeCards.map(card => ({ text: card.question, cardIndex: cards.indexOf(card) })));
   let answers = shuffleArray(activeCards.map(card => ({ text: card.answer, cardIndex: cards.indexOf(card) })));
 
@@ -257,7 +300,7 @@ function renderMatch() {
   `;
 }
 
-// ========== Режим 2: Тест (викторина) ==========
+// ========== Режим 2: Тест ==========
 function renderQuiz() {
   if (gameState.quizQuestions.length === 0) {
     gameState.quizQuestions = shuffleArray([...cards]);
@@ -310,7 +353,7 @@ function renderQuiz() {
   `;
 }
 
-// ========== Режим 3: Сопоставь все (вопросы и ответы перемешаны) ==========
+// ========== Режим 3: Сопоставь все ==========
 function renderMatchAll() {
   const totalPairs = cards.length;
   const matchedCount = gameState.matchedPairs.size;
@@ -323,7 +366,6 @@ function renderMatchAll() {
     `;
   }
 
-  // Перемешиваем и вопросы, и ответы
   let questions = shuffleArray(cards.map(card => ({ text: card.question, cardIndex: cards.indexOf(card) })));
   let answers = shuffleArray(cards.map(card => ({ text: card.answer, cardIndex: cards.indexOf(card) })));
 
@@ -349,7 +391,7 @@ function renderMatchAll() {
   `;
 }
 
-// ========== Режим 4: Аудио-тест (ускоренный) ==========
+// ========== Режим 4: Обычный аудио-тест ==========
 function prepareAudioQuiz() {
   gameState.audioCards = shuffleArray([...cards]);
   gameState.audioIndex = 0;
@@ -430,62 +472,223 @@ function renderAudioQuiz() {
   `;
 }
 
-// ========== Озвучивание с разбивкой по частям ==========
+// ========== Режим 5: Аудио на время (с настройкой секунд) ==========
+function prepareTimedAudioQuiz() {
+  gameState.timedAudioCards = shuffleArray([...cards]);
+  gameState.timedAudioIndex = 0;
+  gameState.timedAudioScore = 0;
+  gameState.timedAudioResults = [];
+  gameState.timedAudioSpeaking = false;
+  gameState.timedAudioStarted = false;
+  gameState.timedAudioFinished = false;
+  gameState.timedAudioTimeRemaining = gameState.timedAudioTimeLimit;
+  if (gameState.timedAudioTimerId) {
+    clearInterval(gameState.timedAudioTimerId);
+    gameState.timedAudioTimerId = null;
+  }
+  // Сброс зафиксированных вариантов
+  gameState.timedCurrentOptions = [];
+  gameState.timedCurrentCorrect = '';
+  gameState.timedCurrentQuestionIndex = -1;
+}
+
+// Функция генерации вариантов для текущего вопроса (вызывается только при смене вопроса)
+function generateTimedOptions() {
+  const index = gameState.timedAudioIndex;
+  if (index >= gameState.timedAudioCards.length) return;
+  const card = gameState.timedAudioCards[index];
+  const correct = card.answer;
+  const allAnswers = cards.map(c => c.answer);
+  const distractors = allAnswers.filter(a => a !== correct);
+  let options = [correct];
+  const shuffledDistractors = shuffleArray(distractors);
+  for (let i = 0; i < Math.min(3, shuffledDistractors.length); i++) {
+    options.push(shuffledDistractors[i]);
+  }
+  while (options.length < 4) {
+    options.push('???');
+  }
+  shuffleArray(options);
+  gameState.timedCurrentOptions = options;
+  gameState.timedCurrentCorrect = correct;
+  gameState.timedCurrentQuestionIndex = index;
+}
+
+function renderTimedAudioQuiz() {
+  if (gameState.timedAudioCards.length === 0 && !gameState.timedAudioFinished) {
+    prepareTimedAudioQuiz();
+  }
+
+  const total = gameState.timedAudioCards.length;
+  const currentIndex = gameState.timedAudioIndex;
+  const started = gameState.timedAudioStarted;
+  const finished = gameState.timedAudioFinished;
+
+  // Если игра завершена или все вопросы пройдены
+  if (finished || (started && currentIndex >= total)) {
+    if (currentIndex >= total && !finished) {
+      finishTimedAudioQuiz(true);
+    }
+    const errors = gameState.timedAudioResults.filter(r => r.selectedAnswer !== r.correctAnswer);
+    let errorHtml = '';
+    if (errors.length > 0) {
+      errorHtml = `
+        <div style="margin-top:16px; text-align:left; max-width:500px; margin-left:auto; margin-right:auto;">
+          <h3 style="color:#dc3545;">Ошибки (${errors.length}):</h3>
+          ${errors.map(e => `
+            <div style="background:#fff; border-radius:8px; padding:12px; margin-bottom:8px; border-left:4px solid #dc3545;">
+              <div><strong>ГОСТ:</strong> ${e.question}</div>
+              <div><span style="color:#dc3545;">✘ Ваш ответ:</span> ${e.selectedAnswer}</div>
+              <div><span style="color:#28a745;">✔ Правильный:</span> ${e.correctAnswer}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="quiz-finish">
+        <h2>⏱ Аудио на время завершено!</h2>
+        <p style="font-size:20px; margin:16px 0;">Правильных: ${gameState.timedAudioScore} из ${total}</p>
+        ${errors.length > 0 ? `<p style="color:#dc3545; font-weight:600;">Ошибок: ${errors.length}</p>` : '<p style="color:#28a745; font-weight:600;">🎉 Все верно! Молодец!</p>'}
+        ${errorHtml}
+        <button class="reset-btn" id="resetTimedAudioBtn" style="margin-top:20px;">🔄 Пройти заново</button>
+      </div>
+    `;
+  }
+
+  // Если ещё не начали – настройка времени
+  if (!started) {
+    return `
+      <div class="timed-setup" style="text-align:center; padding:20px 0;">
+        <h3>⏱ Выберите время на прохождение всех карточек</h3>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:12px; margin:16px 0;">
+          <label style="font-size:16px; font-weight:500;">Время в секундах:</label>
+          <input type="number" id="timedTimeInput" value="${gameState.timedAudioTimeLimit}" min="1" max="9999" 
+                 style="padding:12px; font-size:18px; border-radius:12px; border:2px solid #ddd; width:120px; text-align:center;">
+          <button class="timed-start-btn" id="timedStartBtn" 
+                  style="padding:14px 32px; background:#4a6cf7; color:white; border:none; border-radius:50px; font-size:18px; font-weight:600; cursor:pointer;">
+            🚀 Старт!
+          </button>
+        </div>
+        <p style="color:#888; font-size:14px;">Всего карточек: ${total}</p>
+      </div>
+    `;
+  }
+
+  // Игра идёт – проверяем, нужно ли сгенерировать варианты для текущего вопроса
+  if (gameState.timedCurrentQuestionIndex !== currentIndex || gameState.timedCurrentOptions.length === 0) {
+    generateTimedOptions();
+  }
+
+  const options = gameState.timedCurrentOptions;
+  const correctAnswer = gameState.timedCurrentCorrect;
+
+  const optionsHtml = options.map((opt, idx) => `
+    <div class="audio-option" data-option="${opt}" data-index="${idx}">${opt}</div>
+  `).join('');
+
+  const speakBtnDisabled = gameState.timedAudioSpeaking ? 'disabled' : '';
+  const speakBtnText = gameState.timedAudioSpeaking ? '🔊 Говорю...' : '🔊 Прослушать номер';
+
+  const progress = ((currentIndex) / total * 100).toFixed(0);
+  const timeDisplay = gameState.timedAudioTimeRemaining > 0 ? gameState.timedAudioTimeRemaining : 0;
+
+  return `
+    <div class="timed-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span class="quiz-stats">Вопрос ${currentIndex + 1} из ${total}</span>
+      <span class="timed-timer" style="font-size:20px; font-weight:bold; color:${timeDisplay <= 3 ? '#dc3545' : '#4a6cf7'}">
+        ⏱ ${timeDisplay} с
+      </span>
+      <span class="quiz-stats">Правильных: ${gameState.timedAudioScore}</span>
+    </div>
+    <div class="progress-bar" style="width:100%; height:6px; background:#e8ecf1; border-radius:3px; margin-bottom:16px;">
+      <div style="width:${progress}%; height:100%; background:#4a6cf7; border-radius:3px; transition:width 0.3s;"></div>
+    </div>
+    <div class="audio-controls" style="display:flex; flex-direction:column; align-items:center; gap:16px; margin-top:10px;">
+      <button class="audio-speak-btn" id="timedAudioSpeakBtn" ${speakBtnDisabled}>
+        ${speakBtnText}
+      </button>
+      <div class="audio-options">
+        ${optionsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function finishTimedAudioQuiz(success = false) {
+  if (gameState.timedAudioTimerId) {
+    clearInterval(gameState.timedAudioTimerId);
+    gameState.timedAudioTimerId = null;
+  }
+  gameState.timedAudioFinished = true;
+  renderGame();
+}
+
+// ========== Озвучивание с разбивкой ==========
 function speakText(text) {
   if (!window.speechSynthesis) {
     alert('Ваш браузер не поддерживает синтез речи.');
     return;
   }
-  // Извлекаем только цифры из текста (удаляем всё, кроме цифр)
   const digits = text.replace(/\D/g, '');
   if (!digits) {
     alert('Не удалось распознать номер.');
     return;
   }
 
-  let spoken = digits; // по умолчанию
+  let spoken = digits;
   const len = digits.length;
-
   if (len === 4) {
-    // 4-значное → разбиваем на 2+2
     const part1 = digits.substring(0, 2);
     const part2 = digits.substring(2, 4);
     spoken = part1 + ' ' + part2;
   } else if (len === 5) {
-    // 5-значное → разбиваем на 2+3
     const part1 = digits.substring(0, 2);
     const part2 = digits.substring(2, 5);
     spoken = part1 + ' ' + part2;
   } else {
-    // 3-значные и любые другие произносим как есть
     spoken = digits;
   }
 
-  // Отменяем предыдущую речь
   window.speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(spoken);
   utterance.lang = 'ru-RU';
-  utterance.rate = 2.0; // быстро
+  utterance.rate = 1.2;
   utterance.pitch = 1;
 
-  gameState.audioSpeaking = true;
-  renderGame();
-
-  utterance.onend = () => {
-    gameState.audioSpeaking = false;
+  const isTimed = (gameState.mode === 'timedAudio');
+  if (isTimed) {
+    gameState.timedAudioSpeaking = true;
     renderGame();
-  };
-  utterance.onerror = () => {
-    gameState.audioSpeaking = false;
+    utterance.onend = () => {
+      gameState.timedAudioSpeaking = false;
+      renderGame();
+    };
+    utterance.onerror = () => {
+      gameState.timedAudioSpeaking = false;
+      renderGame();
+      alert('Не удалось воспроизвести речь.');
+    };
+  } else {
+    gameState.audioSpeaking = true;
     renderGame();
-    alert('Не удалось воспроизвести речь.');
-  };
+    utterance.onend = () => {
+      gameState.audioSpeaking = false;
+      renderGame();
+    };
+    utterance.onerror = () => {
+      gameState.audioSpeaking = false;
+      renderGame();
+      alert('Не удалось воспроизвести речь.');
+    };
+  }
 
   window.speechSynthesis.speak(utterance);
 }
 
-// ========== Обработчики кликов (делегирование) ==========
+// ========== Обработчики кликов ==========
 gameContainer.addEventListener('click', (e) => {
   const target = e.target.closest('.game-item');
   if (target) {
@@ -493,8 +696,12 @@ gameContainer.addEventListener('click', (e) => {
     return;
   }
 
-  if (e.target.id === 'resetGameBtn' || e.target.id === 'resetMatchAllBtn' || e.target.id === 'resetQuizBtn' || e.target.id === 'resetGameBtnMatch' || e.target.id === 'resetAudioQuizBtn') {
+  // Кнопки сброса
+  if (e.target.id === 'resetGameBtn' || e.target.id === 'resetMatchAllBtn' || e.target.id === 'resetQuizBtn' || e.target.id === 'resetGameBtnMatch' || e.target.id === 'resetAudioQuizBtn' || e.target.id === 'resetTimedAudioBtn') {
     resetGame();
+    if (gameState.mode === 'audioQuiz') prepareAudioQuiz();
+    else if (gameState.mode === 'timedAudio') prepareTimedAudioQuiz();
+    renderGame();
     return;
   }
 
@@ -519,7 +726,7 @@ gameContainer.addEventListener('click', (e) => {
     return;
   }
 
-  // Аудио-тест
+  // Обычный аудио-тест
   if (e.target.id === 'audioSpeakBtn') {
     const currentIndex = gameState.audioIndex;
     if (currentIndex < gameState.audioCards.length) {
@@ -532,7 +739,7 @@ gameContainer.addEventListener('click', (e) => {
   }
 
   const audioOpt = e.target.closest('.audio-option');
-  if (audioOpt) {
+  if (audioOpt && gameState.mode === 'audioQuiz') {
     const currentIndex = gameState.audioIndex;
     if (currentIndex >= gameState.audioCards.length) return;
     const currentCard = gameState.audioCards[currentIndex];
@@ -550,6 +757,70 @@ gameContainer.addEventListener('click', (e) => {
     renderGame();
     return;
   }
+
+  // Аудио на время
+  if (e.target.id === 'timedStartBtn') {
+    const input = document.getElementById('timedTimeInput');
+    if (input) {
+      let seconds = parseInt(input.value);
+      if (isNaN(seconds) || seconds < 1) seconds = 10;
+      gameState.timedAudioTimeLimit = seconds;
+      gameState.timedAudioTimeRemaining = seconds;
+    }
+    gameState.timedAudioStarted = true;
+    gameState.timedAudioFinished = false;
+    if (gameState.timedAudioTimerId) {
+      clearInterval(gameState.timedAudioTimerId);
+    }
+    gameState.timedAudioTimerId = setInterval(() => {
+      gameState.timedAudioTimeRemaining--;
+      if (gameState.timedAudioTimeRemaining <= 0) {
+        gameState.timedAudioTimeRemaining = 0;
+        finishTimedAudioQuiz(false);
+      } else {
+        renderGame();
+      }
+    }, 1000);
+    renderGame();
+    return;
+  }
+
+  if (e.target.id === 'timedAudioSpeakBtn') {
+    const currentIndex = gameState.timedAudioIndex;
+    if (currentIndex < gameState.timedAudioCards.length && !gameState.timedAudioSpeaking && !gameState.timedAudioFinished) {
+      const questionText = gameState.timedAudioCards[currentIndex].question;
+      speakText(questionText);
+    }
+    return;
+  }
+
+  const timedOpt = e.target.closest('.audio-option');
+  if (timedOpt && gameState.mode === 'timedAudio' && gameState.timedAudioStarted && !gameState.timedAudioFinished) {
+    const currentIndex = gameState.timedAudioIndex;
+    if (currentIndex >= gameState.timedAudioCards.length) return;
+    const currentCard = gameState.timedAudioCards[currentIndex];
+    const selectedText = timedOpt.dataset.option;
+    const correct = gameState.timedCurrentCorrect; // используем сохранённый правильный ответ
+    gameState.timedAudioResults.push({
+      question: currentCard.question,
+      correctAnswer: correct,
+      selectedAnswer: selectedText,
+    });
+    if (selectedText === correct) {
+      gameState.timedAudioScore++;
+    }
+    gameState.timedAudioIndex++;
+    // Сброс зафиксированных вариантов для следующего вопроса
+    gameState.timedCurrentOptions = [];
+    gameState.timedCurrentCorrect = '';
+    gameState.timedCurrentQuestionIndex = -1;
+    if (gameState.timedAudioIndex >= gameState.timedAudioCards.length) {
+      finishTimedAudioQuiz(true);
+    } else {
+      renderGame();
+    }
+    return;
+  }
 });
 
 function handleGameItemClick(el) {
@@ -560,7 +831,7 @@ function handleGameItemClick(el) {
   }
 }
 
-// ========== Логика "Сопоставь пару" ==========
+// ========== Логика "Сопоставь пару" и "Сопоставь все" (без изменений) ==========
 function handleMatchClick(el) {
   if (el.classList.contains('matched')) return;
   if (gameState.wrongTimeout) return;
@@ -628,7 +899,6 @@ function handleMatchClick(el) {
   }
 }
 
-// ========== Логика "Сопоставь все" ==========
 function handleMatchAllClick(el) {
   if (el.classList.contains('matched')) return;
   if (gameState.wrongTimeout) return;
