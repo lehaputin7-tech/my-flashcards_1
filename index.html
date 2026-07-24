@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Карточки + игра</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+  <h1>📚 Карточки</h1>
+
+  <!-- Вкладки -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="cards">📇 Карточки</button>
+    <button class="tab-btn" data-tab="game">🎯 Игра</button>
+  </div>
+
+  <!-- Форма добавления (только на вкладке "Карточки") -->
+  <div class="add-form" id="addForm">
+    <input type="text" id="questionInput" placeholder="Вопрос (лицевая сторона)">
+    <input type="text" id="answerInput" placeholder="Ответ (обратная сторона)">
+    <button id="addBtn">➕ Добавить</button>
+  </div>
+
+  <!-- Контейнер для карточек -->
+  <div id="cardContainer" class="tab-content active"></div>
+
+  <!-- Контейнер для игры -->
+  <div id="gameContainer" class="tab-content"></div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
