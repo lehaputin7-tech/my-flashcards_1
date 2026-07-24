@@ -1,5 +1,5 @@
-// ========== Версия приложения (меняйте при обновлении карточек) ==========
-const APP_VERSION = '1.0'; // если захотите обновить карточки — увеличьте число
+// ========== Версия приложения ==========
+const APP_VERSION = '1.0';
 
 // ========== Хранилище ==========
 let cards = [];
@@ -13,27 +13,28 @@ const addBtn = document.getElementById('addBtn');
 
 // Состояние игры
 let gameState = {
-  selected: null,       // для режима match и matchAll
+  selected: null,
   matchedPairs: new Set(),
   wrongTimeout: null,
-  mode: 'match',        // 'match' | 'quiz' | 'matchAll'
-  // для квиза
+  mode: 'match',
   quizIndex: 0,
   quizScore: 0,
   quizAnswered: false,
   quizQuestions: [],
+  audioCards: [],
+  audioIndex: 0,
+  audioScore: 0,
+  audioResults: [],
+  audioSpeaking: false,
 };
 
 // ========== Загрузка / сохранение ==========
 function loadCards() {
   const saved = localStorage.getItem('flashcards');
   const savedVersion = localStorage.getItem('flashcards_version');
-
-  // Если данные есть и версия совпадает — загружаем их, иначе — используем новые карточки
   if (saved && savedVersion === APP_VERSION) {
     cards = JSON.parse(saved);
   } else {
-    // ===== НОВЫЙ НАБОР КАРТОЧЕК (ГОСТ → описание) =====
     cards = [
       { question: 'ГОСТ Р 57837', answer: 'Двутавры стальные горячекатаные с параллельными гранями полок' },
       { question: 'ГОСТ 8239', answer: 'Двутавры стальные горячекатаные (с уклоном внутренних граней полок)' },
@@ -61,8 +62,6 @@ function loadCards() {
       { question: 'ГОСТ 10704', answer: 'Трубы стальные электросварные прямошовные' },
       { question: 'ГОСТ 8639', answer: 'Трубы стальные квадратные' },
     ];
-    // ===== КОНЕЦ НОВОГО НАБОРА =====
-    // Сохраняем новые карточки с текущей версией
     saveCards();
   }
   render();
@@ -86,6 +85,11 @@ function resetGame() {
   gameState.quizScore = 0;
   gameState.quizAnswered = false;
   gameState.quizQuestions = [];
+  gameState.audioCards = [];
+  gameState.audioIndex = 0;
+  gameState.audioScore = 0;
+  gameState.audioResults = [];
+  gameState.audioSpeaking = false;
   renderGame();
 }
 
@@ -176,7 +180,7 @@ function render() {
   });
 }
 
-// ========== Общая функция рендеринга игры (выбор режима) ==========
+// ========== Общая функция рендеринга игры ==========
 function renderGame() {
   if (cards.length === 0) {
     gameContainer.innerHTML = `<div class="game-empty">Нет карточек для игры. Добавьте их на вкладке "Карточки".</div>`;
@@ -188,6 +192,7 @@ function renderGame() {
       <button class="game-mode-btn ${gameState.mode === 'match' ? 'active' : ''}" data-mode="match">🧩 Сопоставь пару</button>
       <button class="game-mode-btn ${gameState.mode === 'quiz' ? 'active' : ''}" data-mode="quiz">📝 Тест</button>
       <button class="game-mode-btn ${gameState.mode === 'matchAll' ? 'active' : ''}" data-mode="matchAll">🔗 Сопоставь все</button>
+      <button class="game-mode-btn ${gameState.mode === 'audioQuiz' ? 'active' : ''}" data-mode="audioQuiz">🎧 Аудио-тест</button>
     </div>
   `;
 
@@ -198,6 +203,8 @@ function renderGame() {
     content = renderQuiz();
   } else if (gameState.mode === 'matchAll') {
     content = renderMatchAll();
+  } else if (gameState.mode === 'audioQuiz') {
+    content = renderAudioQuiz();
   }
 
   gameContainer.innerHTML = modeTabs + content;
@@ -205,12 +212,15 @@ function renderGame() {
   document.querySelectorAll('.game-mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       gameState.mode = btn.dataset.mode;
+      if (gameState.mode === 'audioQuiz') {
+        prepareAudioQuiz();
+      }
       resetGame();
     });
   });
 }
 
-// ========== Режим 1: Сопоставь пару (оригинал) ==========
+// ========== Режим 1: Сопоставь пару ==========
 function renderMatch() {
   const activeCards = cards.filter((_, idx) => !gameState.matchedPairs.has(idx));
   if (activeCards.length === 0) {
@@ -298,7 +308,7 @@ function renderQuiz() {
   `;
 }
 
-// ========== Режим 3: Сопоставь все (карточки не исчезают) ==========
+// ========== Режим 3: Сопоставь все ==========
 function renderMatchAll() {
   const totalPairs = cards.length;
   const matchedCount = gameState.matchedPairs.size;
@@ -336,26 +346,156 @@ function renderMatchAll() {
   `;
 }
 
-// ========== Общие утилиты ==========
-function shuffleArray(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
+// ========== Режим 4: Аудио-тест (ускоренный) ==========
+function prepareAudioQuiz() {
+  gameState.audioCards = shuffleArray([...cards]);
+  gameState.audioIndex = 0;
+  gameState.audioScore = 0;
+  gameState.audioResults = [];
+  gameState.audioSpeaking = false;
 }
 
-// ========== Обработчики кликов в играх (делегирование) ==========
+function renderAudioQuiz() {
+  if (gameState.audioCards.length === 0) {
+    prepareAudioQuiz();
+  }
+
+  const total = gameState.audioCards.length;
+  const currentIndex = gameState.audioIndex;
+
+  if (currentIndex >= total) {
+    const errors = gameState.audioResults.filter(r => r.selectedAnswer !== r.correctAnswer);
+    let errorHtml = '';
+    if (errors.length > 0) {
+      errorHtml = `
+        <div style="margin-top:16px; text-align:left; max-width:500px; margin-left:auto; margin-right:auto;">
+          <h3 style="color:#dc3545;">Ошибки (${errors.length}):</h3>
+          ${errors.map(e => `
+            <div style="background:#fff; border-radius:8px; padding:12px; margin-bottom:8px; border-left:4px solid #dc3545;">
+              <div><strong>ГОСТ:</strong> ${e.question}</div>
+              <div><span style="color:#dc3545;">✘ Ваш ответ:</span> ${e.selectedAnswer}</div>
+              <div><span style="color:#28a745;">✔ Правильный:</span> ${e.correctAnswer}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="quiz-finish">
+        <h2>🎧 Аудио-тест завершён!</h2>
+        <p style="font-size:20px; margin:16px 0;">Правильных: ${gameState.audioScore} из ${total}</p>
+        ${errors.length > 0 ? `<p style="color:#dc3545; font-weight:600;">Ошибок: ${errors.length}</p>` : '<p style="color:#28a745; font-weight:600;">🎉 Все верно! Молодец!</p>'}
+        ${errorHtml}
+        <button class="reset-btn" id="resetAudioQuizBtn" style="margin-top:20px;">🔄 Пройти заново</button>
+      </div>
+    `;
+  }
+
+  const currentCard = gameState.audioCards[currentIndex];
+  const correctAnswer = currentCard.answer;
+
+  const allAnswers = cards.map(c => c.answer);
+  const distractors = allAnswers.filter(a => a !== correctAnswer);
+  let options = [correctAnswer];
+  const shuffledDistractors = shuffleArray(distractors);
+  for (let i = 0; i < Math.min(3, shuffledDistractors.length); i++) {
+    options.push(shuffledDistractors[i]);
+  }
+  while (options.length < 4) {
+    options.push('???');
+  }
+  shuffleArray(options);
+
+  const optionsHtml = options.map((opt, idx) => `
+    <div class="audio-option" data-option="${opt}" data-index="${idx}">${opt}</div>
+  `).join('');
+
+  const speakBtnDisabled = gameState.audioSpeaking ? 'disabled' : '';
+  const speakBtnText = gameState.audioSpeaking ? '🔊 Говорю...' : '🔊 Прослушать номер';
+
+  return `
+    <div class="quiz-stats">Вопрос ${currentIndex + 1} из ${total} | Правильных: ${gameState.audioScore}</div>
+    <div class="audio-controls" style="display:flex; flex-direction:column; align-items:center; gap:16px; margin-top:10px;">
+      <button class="audio-speak-btn" id="audioSpeakBtn" ${speakBtnDisabled}>
+        ${speakBtnText}
+      </button>
+      <div class="audio-options">
+        ${optionsHtml}
+      </div>
+    </div>
+  `;
+}
+
+// ========== Озвучивание (только цифры, максимально быстро) ==========
+// ========== Озвучивание с разбивкой по частям ==========
+function speakText(text) {
+  if (!window.speechSynthesis) {
+    alert('Ваш браузер не поддерживает синтез речи.');
+    return;
+  }
+  // Извлекаем только цифры из текста (удаляем всё, кроме цифр)
+  const digits = text.replace(/\D/g, '');
+  if (!digits) {
+    alert('Не удалось распознать номер.');
+    return;
+  }
+
+  let spoken = digits; // по умолчанию
+  const len = digits.length;
+
+  if (len === 4) {
+    // 4-значное → разбиваем на 2+2
+    const part1 = digits.substring(0, 2);
+    const part2 = digits.substring(2, 4);
+    spoken = part1 + ' ' + part2;
+  } else if (len === 5) {
+    // 5-значное → разбиваем на 2+3
+    const part1 = digits.substring(0, 2);
+    const part2 = digits.substring(2, 5);
+    spoken = part1 + ' ' + part2;
+  } else {
+    // 3-значные и любые другие произносим как есть
+    spoken = digits;
+  }
+
+  // Отменяем предыдущую речь
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(spoken);
+  utterance.lang = 'ru-RU';
+  utterance.rate = 2.0; // быстро
+  utterance.pitch = 1;
+
+  gameState.audioSpeaking = true;
+  renderGame();
+
+  utterance.onend = () => {
+    gameState.audioSpeaking = false;
+    renderGame();
+  };
+  utterance.onerror = () => {
+    gameState.audioSpeaking = false;
+    renderGame();
+    alert('Не удалось воспроизвести речь.');
+  };
+
+  window.speechSynthesis.speak(utterance);
+}
+
+// ========== Обработчики кликов (делегирование) ==========
 gameContainer.addEventListener('click', (e) => {
   const target = e.target.closest('.game-item');
   if (target) {
     handleGameItemClick(target);
     return;
   }
-  if (e.target.id === 'resetGameBtn' || e.target.id === 'resetMatchAllBtn' || e.target.id === 'resetQuizBtn') {
+
+  if (e.target.id === 'resetGameBtn' || e.target.id === 'resetMatchAllBtn' || e.target.id === 'resetQuizBtn' || e.target.id === 'resetGameBtnMatch' || e.target.id === 'resetAudioQuizBtn') {
     resetGame();
     return;
   }
+
   if (e.target.id === 'quizNextBtn') {
     gameState.quizIndex++;
     gameState.quizAnswered = false;
@@ -363,6 +503,7 @@ gameContainer.addEventListener('click', (e) => {
     renderGame();
     return;
   }
+
   const option = e.target.closest('.quiz-option');
   if (option && !gameState.quizAnswered) {
     const selectedText = option.dataset.option;
@@ -372,6 +513,38 @@ gameContainer.addEventListener('click', (e) => {
     }
     gameState.quizAnswered = true;
     gameState.selectedOption = selectedText;
+    renderGame();
+    return;
+  }
+
+  // Аудио-тест
+  if (e.target.id === 'audioSpeakBtn') {
+    const currentIndex = gameState.audioIndex;
+    if (currentIndex < gameState.audioCards.length) {
+      const questionText = gameState.audioCards[currentIndex].question;
+      if (!gameState.audioSpeaking) {
+        speakText(questionText);
+      }
+    }
+    return;
+  }
+
+  const audioOpt = e.target.closest('.audio-option');
+  if (audioOpt) {
+    const currentIndex = gameState.audioIndex;
+    if (currentIndex >= gameState.audioCards.length) return;
+    const currentCard = gameState.audioCards[currentIndex];
+    const selectedText = audioOpt.dataset.option;
+    const correct = currentCard.answer;
+    gameState.audioResults.push({
+      question: currentCard.question,
+      correctAnswer: correct,
+      selectedAnswer: selectedText,
+    });
+    if (selectedText === correct) {
+      gameState.audioScore++;
+    }
+    gameState.audioIndex++;
     renderGame();
     return;
   }
@@ -519,6 +692,15 @@ function handleMatchAllClick(el) {
       gameState.selected = null;
     }
   }
+}
+
+// ========== Общие утилиты ==========
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
 // ========== События ==========
